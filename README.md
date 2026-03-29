@@ -67,7 +67,7 @@ The main idea was to create a **portable, standalone F1 marshal-style panel** th
 ---
 <img width="320" height="1677" alt="image" src="https://github.com/user-attachments/assets/934f1014-1145-4799-90c7-37a05030abc7" /> <img width="320" height="2226" alt="image" src="https://github.com/user-attachments/assets/6a5c5afc-3e25-4ee9-9302-bd6a5729b7e9" />
 
-<img width="270" height="480" alt="image" src="https://github.com/user-attachments/assets/7cd9e9ed-1e70-4f47-b38e-b5a0a4f97a62" />
+
 
 
 
