@@ -1,0 +1,400 @@
+esphome:
+  name: f1-master-marshal-panel
+  friendly_name: F1 Master Marshal panel
+
+  platformio_options:
+    board_build.f_cpu: 160000000L
+
+  on_boot:
+    priority: 600
+    then:
+      - delay: 1s
+      - light.turn_on:
+          id: f1_panel
+          effect: BOOT_ANIMATION
+
+esp8266:
+  board: d1_mini
+
+logger:
+
+api:
+  encryption:
+    key: ""
+
+ota:
+  - platform: esphome
+    password: ""
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+
+  ap:
+    ssid: "F1-Master-Marshal-Panel"
+    password: ""
+
+captive_portal:
+
+globals:
+  - id: last_status
+    type: int
+    initial_value: '-1'
+
+  - id: clear_start_time
+    type: uint32_t
+    initial_value: '0'
+
+  - id: ha_last_update
+    type: uint32_t
+    initial_value: '0'
+
+  - id: finished_active
+    type: bool
+    initial_value: 'false'
+
+  - id: finished_start
+    type: uint32_t
+    initial_value: '0'
+
+  - id: last_session_state
+    type: std::string
+    initial_value: '"NONE"'
+
+number:
+  - platform: template
+    name: "F1 Brightness"
+    id: brightness_factor
+    min_value: 0.1
+    max_value: 0.6
+    step: 0.05
+    initial_value: 0.5
+    restore_value: true
+    optimistic: true
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_track_status
+    entity_id: sensor.f1_track_status
+    internal: true
+
+    on_value:
+      then:
+        - lambda: id(ha_last_update) = millis();
+        - light.turn_on:
+            id: f1_panel
+            effect: F1_TRACK_STATUS
+
+  - platform: homeassistant
+    id: session_status
+    entity_id: sensor.f1_session_session_status
+    internal: true
+
+    on_value:
+      then:
+        - lambda: |-
+            std::string s = id(session_status).state;
+
+            if(s == "finished" && id(last_session_state) != "finished") {
+              id(finished_active) = true;
+              id(finished_start) = millis();
+            }
+
+            id(last_session_state) = s;
+
+button:
+  - platform: template
+    name: "TEST CLEAR"
+    on_press:
+      - lambda: id(ha_track_status).publish_state("CLEAR");
+      - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
+
+  - platform: template
+    name: "TEST YELLOW"
+    on_press:
+      - lambda: id(ha_track_status).publish_state("YELLOW");
+      - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
+
+  - platform: template
+    name: "TEST RED"
+    on_press:
+      - lambda: id(ha_track_status).publish_state("RED");
+      - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
+
+  - platform: template
+    name: "TEST SC"
+    on_press:
+      - lambda: id(ha_track_status).publish_state("SC");
+      - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
+
+  - platform: template
+    name: "TEST VSC"
+    on_press:
+      - lambda: id(ha_track_status).publish_state("VSC");
+      - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
+
+  - platform: template
+    name: "TEST FINISHED"
+    on_press:
+      - lambda: |-
+          id(finished_active) = true;
+          id(finished_start) = millis();
+      - light.turn_on:
+          id: f1_panel
+          effect: F1_TRACK_STATUS
+
+light:
+  - platform: neopixelbus
+    id: f1_panel
+    name: "F1 Panel"
+    type: GRB
+    variant: ws2812x
+    pin: GPIO2
+    num_leds: 256
+    restore_mode: ALWAYS_ON
+    default_transition_length: 0s
+
+    effects:
+
+      - addressable_lambda:
+          name: BOOT_ANIMATION
+          update_interval: 40ms
+          lambda: |-
+            static int phase = 0;
+            static int y = 15;
+            static uint32_t last = 0;
+
+            auto XY = [](int x, int y) -> int {
+              return (x < 8) ? (y * 8 + x) : (128 + y * 8 + (x - 8));
+            };
+
+            float b = id(brightness_factor).state;
+            uint8_t br = uint8_t(255 * b);
+
+            Color blue = Color(0,0,br);
+            Color green = Color(0,br,0);
+            Color black = Color(0,0,0);
+
+            it.all() = black;
+
+            if(phase == 0) {
+              for(int x=0;x<16;x++){
+                it[XY(x,y)] = blue;
+                if(y+1 < 16) it[XY(x,y+1)] = blue;
+              }
+              y--;
+              if(y < 0) { y = 0; phase = 1; }
+              return;
+            }
+
+            if(phase == 1) {
+              for(int x=0;x<16;x++){
+                it[XY(x,y)] = blue;
+                if(y-1 >= 0) it[XY(x,y-1)] = blue;
+              }
+              y++;
+              if(y > 15) { phase = 2; last = millis(); }
+              return;
+            }
+
+            if(phase == 2) {
+              static const uint8_t check[][2] = {
+                {2,8},{3,9},{4,10},{5,11},{6,12},{7,13},
+                {7,11},{8,10},{9,9},{10,8},
+                {3,8},{4,9},{5,10},{6,11}
+              };
+              for(auto &p : check) it[XY(p[0], p[1])] = green;
+              if(millis() - last > 2000) phase = 3;
+              return;
+            }
+
+            if(phase == 3) {
+              auto call = id(f1_panel).turn_on();
+              call.set_effect("F1_TRACK_STATUS");
+              call.perform();
+              return;
+            }
+
+      - addressable_lambda:
+          name: F1_TRACK_STATUS
+          update_interval: 40ms
+          lambda: |-
+            const int CLEAR = 0;
+            const int YELLOW = 1;
+            const int RED = 2;
+            const int SC = 3;
+            const int VSC = 4;
+
+            auto XY = [](int x, int y) -> int {
+              return (x < 8) ? (y * 8 + x) : (128 + y * 8 + (x - 8));
+            };
+
+            static int frame = 0;
+            static std::string active_status = "NONE";
+            static std::string last_state = "";
+
+            uint32_t now = millis();
+
+            float b = id(brightness_factor).state;
+            uint8_t br = uint8_t(255 * b);
+
+            Color Y = Color(br, br * 0.7, 0);
+            Color R = Color(br, 0, 0);
+            Color G = Color(0, br, 0);
+            Color Wc = Color(br, br, br);
+            Color Black = Color(0,0,0);
+
+            // ========================
+            // FINISHED (4x4 + fade)
+            // ========================
+            if(id(finished_active)) {
+
+              uint32_t elapsed = now - id(finished_start);
+
+              if(elapsed > 30000) {
+                id(finished_active) = false;
+                it.all() = Black;
+                return;
+              }
+
+              uint32_t phase = (elapsed / 2000) % 2;
+              float transition = (elapsed % 2000) / 2000.0;
+              float fade = 1.0;
+
+              if(transition < 0.1) fade = transition / 0.1;
+              else if(transition > 0.9) fade = (1.0 - transition) / 0.1;
+
+              float base = 255.0 * 0.2 * fade;
+
+              for(int x=0; x<16; x++) {
+                for(int y=0; y<16; y++) {
+
+                  int bx = x / 4;
+                  int by = y / 4;
+
+                  bool check = ((bx + by + phase) % 2);
+
+                  uint8_t val = check ? uint8_t(base) : 0;
+
+                  it[XY(x,y)] = Color(val, val, val);
+                }
+              }
+
+              return;
+            }
+
+            auto s = id(ha_track_status).state;
+
+            if(s != last_state && s != "unknown" && s != "unavailable") {
+              active_status = s;
+              id(ha_last_update) = now;
+              last_state = s;
+            }
+
+            if(now - id(ha_last_update) > 30000) {
+              it.all() = Black;
+              return;
+            }
+
+            int current_status = CLEAR;
+
+            if(active_status == "YELLOW") current_status = YELLOW;
+            else if(active_status == "RED") current_status = RED;
+            else if(active_status == "SC") current_status = SC;
+            else if(active_status == "VSC") current_status = VSC;
+
+            it.all() = Black;
+
+            if(current_status == CLEAR) {
+              if(id(last_status) != CLEAR) id(clear_start_time) = now;
+              id(last_status) = CLEAR;
+
+              if(now - id(clear_start_time) < 5000) {
+                it.all() = G;
+              }
+              return;
+            }
+
+            id(last_status) = current_status;
+
+            if(current_status == RED) {
+              if(frame % 20 < 10) it.all() = R;
+              frame++;
+              return;
+            }
+
+            if(current_status == YELLOW) {
+              for(int x=0; x<16; x++) {
+                for(int y=0; y<16; y++) {
+                  if (((x + y + (frame / 3)) % 10) < 5) {
+                    it[XY(x,y)] = Y;
+                  }
+                }
+              }
+              frame++;
+              return;
+            }
+
+            if(current_status == SC) {
+
+              static const uint8_t border[][2] = {
+                {0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{7,0},{8,0},{9,0},{10,0},{11,0},{12,0},{13,0},{14,0},{15,0},
+                {0,1},{1,1},{2,1},{3,1},{4,1},{5,1},{6,1},{7,1},{8,1},{9,1},{10,1},{11,1},{12,1},{13,1},{14,1},{15,1},
+                {15,2},{15,3},{15,4},{15,5},{15,6},{15,7},{15,8},{15,9},{15,10},{15,11},{15,12},{15,13},
+                {15,14},{14,14},{13,14},{12,14},{11,14},{10,14},{9,14},{8,14},{7,14},{6,14},{5,14},{4,14},{3,14},{2,14},{1,14},{0,14},
+                {15,15},{14,15},{13,15},{12,15},{11,15},{10,15},{9,15},{8,15},{7,15},{6,15},{5,15},{4,15},{3,15},{2,15},{1,15},{0,15},
+                {0,13},{0,12},{0,11},{0,10},{0,9},{0,8},{0,7},{0,6},{0,5},{0,4},{0,3},{0,2}
+              };
+
+              int len = sizeof(border)/2;
+              int head = frame % len;
+
+              for(int i=0;i<18;i++){
+                float fade = 1.0 - (i/18.0);
+                Color c = Color(br*fade, br*0.7*fade, 0);
+
+                for(int k=0;k<4;k++){
+                  int idx = (head + k*(len/4) - i + len) % len;
+                  it[XY(border[idx][0], border[idx][1])] = c;
+                }
+              }
+
+              static const uint8_t sc_px[][2] = {
+                {3,3},{4,3},{5,3},{10,3},{11,3},{12,3},{2,4},{6,4},{9,4},{13,4},
+                {2,5},{9,5},{2,6},{9,6},{3,7},{4,7},{5,7},{9,7},{6,8},{9,8},
+                {6,9},{9,9},{6,10},{9,10},{2,11},{6,11},{9,11},{13,11},{3,12},
+                {4,12},{5,12},{10,12},{11,12},{12,12}
+              };
+
+              for(auto &p : sc_px) it[XY(p[0], p[1])] = Wc;
+
+              frame++;
+              return;
+            }
+
+            if(current_status == VSC) {
+
+              for(int x=0;x<16;x++){
+                it[XY(x,0)]=Y; it[XY(x,1)]=Y; it[XY(x,14)]=Y; it[XY(x,15)]=Y;
+              }
+              for(int y=0;y<16;y++){
+                it[XY(0,y)]=Y; it[XY(1,y)]=Y; it[XY(14,y)]=Y; it[XY(15,y)]=Y;
+              }
+
+              bool show = (frame % 20) < 10;
+
+              if(show){
+                static const uint8_t vsc_px[][2] = {
+                  {1,3},{5,3},{8,3},{12,3},{1,4},{5,4},{7,4},{9,4},{11,4},{13,4},
+                  {1,5},{5,5},{7,5},{11,5},{2,6},{4,6},{7,6},{11,6},{2,7},{4,7},
+                  {8,7},{11,7},{2,8},{4,8},{9,8},{11,8},{2,9},{4,9},{9,9},{11,9},
+                  {3,10},{9,10},{11,10},{3,11},{7,11},{9,11},{11,11},{13,11},
+                  {3,12},{8,12},{12,12}
+                };
+                for(auto &p : vsc_px) it[XY(p[0], p[1])] = Wc;
+              }
+
+              frame++;
+              return;
+            }
