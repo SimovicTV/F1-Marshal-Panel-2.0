@@ -48,16 +48,15 @@ globals:
     restore_value: false
     initial_value: '0'
 
-  # Test override za status (traje 5 sekundi)
   - id: test_override_status
     type: std::string
     initial_value: '""'
 
   - id: test_override_until
     type: uint32_t
+    restore_value: false
     initial_value: '0'
 
-  # Za finished efekat (sa HA ili test)
   - id: real_finished_active
     type: bool
     initial_value: 'false'
@@ -78,11 +77,6 @@ globals:
     type: std::string
     initial_value: '"NONE"'
 
-  # Za CLEAR tajmer (prvih 5 sekundi zeleno)
-  - id: clear_start_time
-    type: uint32_t
-    initial_value: '0'
-
   - id: last_status
     type: int
     initial_value: '-1'
@@ -99,14 +93,33 @@ number:
       - lambda: |-
           id(brightness_factor) = x / 100.0;
 
-text_sensor:
+  - platform: template
+    name: "F1 Effect Duration"
+    id: effect_duration_sec
+    min_value: 5
+    max_value: 30
+    step: 1
+    unit_of_measurement: "s"
+    initial_value: 5
+    restore_value: true
+    set_action:
+      - lambda: |-
+
+sensor:
   - platform: homeassistant
-    id: ha_track_status
-    entity_id: sensor.f1_session_track_status   # Isti entitet kao na mini panelu
+    id: race_lap_count
+    entity_id: sensor.f1_session_race_lap_count
     on_value:
       then:
         - lambda: |-
-            // Samo beležimo vreme poslednje promene (za timeout)
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_track_status
+    entity_id: sensor.f1_session_track_status
+    on_value:
+      then:
+        - lambda: |-
             id(ha_last_update) = millis();
         - light.turn_on:
             id: f1_panel
@@ -131,7 +144,7 @@ button:
     on_press:
       - lambda: |-
           id(test_override_status) = "CLEAR";
-          id(test_override_until) = millis() + 5000;
+          id(test_override_until) = millis() + (uint32_t)(id(effect_duration_sec).state * 1000);
           id(test_finished_active) = false;
       - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
 
@@ -140,7 +153,7 @@ button:
     on_press:
       - lambda: |-
           id(test_override_status) = "YELLOW";
-          id(test_override_until) = millis() + 5000;
+          id(test_override_until) = millis() + (uint32_t)(id(effect_duration_sec).state * 1000);
           id(test_finished_active) = false;
       - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
 
@@ -149,7 +162,7 @@ button:
     on_press:
       - lambda: |-
           id(test_override_status) = "RED";
-          id(test_override_until) = millis() + 5000;
+          id(test_override_until) = millis() + (uint32_t)(id(effect_duration_sec).state * 1000);
           id(test_finished_active) = false;
       - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
 
@@ -158,7 +171,7 @@ button:
     on_press:
       - lambda: |-
           id(test_override_status) = "SC";
-          id(test_override_until) = millis() + 5000;
+          id(test_override_until) = millis() + (uint32_t)(id(effect_duration_sec).state * 1000);
           id(test_finished_active) = false;
       - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
 
@@ -167,7 +180,7 @@ button:
     on_press:
       - lambda: |-
           id(test_override_status) = "VSC";
-          id(test_override_until) = millis() + 5000;
+          id(test_override_until) = millis() + (uint32_t)(id(effect_duration_sec).state * 1000);
           id(test_finished_active) = false;
       - light.turn_on: {id: f1_panel, effect: F1_TRACK_STATUS}
 
@@ -210,7 +223,6 @@ light:
             uint8_t br = uint8_t(255 * b);
 
             Color blue = Color(0,0,br);
-            Color green = Color(0,br,0);
             Color black = Color(0,0,0);
 
             it.all() = black;
@@ -236,13 +248,8 @@ light:
             }
 
             if(phase == 2) {
-              static const uint8_t check[][2] = {
-                {2,8},{3,9},{4,10},{5,11},{6,12},{7,13},
-                {7,11},{8,10},{9,9},{10,8},
-                {3,8},{4,9},{5,10},{6,11}
-              };
-              for(auto &p : check) it[XY(p[0], p[1])] = green;
-              if(millis() - last > 2000) phase = 3;
+              // Čekamo 1 sekundu (umesto 2)
+              if(millis() - last > 1000) phase = 3;
               return;
             }
 
@@ -269,6 +276,7 @@ light:
 
             static int frame = 0;
             uint32_t now = millis();
+            uint32_t effect_duration_ms = (uint32_t)(id(effect_duration_sec).state * 1000);
 
             float b = id(brightness_factor);
             uint8_t br = uint8_t(255 * b);
@@ -279,14 +287,14 @@ light:
             Color Wc = Color(br, br, br);
             Color Black = Color(0,0,0);
 
-            // ---------- FINISHED (test ili stvarni) ----------
+            // ---------- FINISHED ----------
             bool finished_effective = false;
             uint32_t finished_elapsed = 0;
 
             if (id(test_finished_active)) {
               finished_effective = true;
               finished_elapsed = now - id(test_finished_start);
-              if (finished_elapsed > 5000) {
+              if (finished_elapsed > effect_duration_ms) {
                 id(test_finished_active) = false;
                 finished_effective = false;
               }
@@ -294,7 +302,7 @@ light:
             if (!finished_effective && id(real_finished_active)) {
               finished_effective = true;
               finished_elapsed = now - id(real_finished_start);
-              if (finished_elapsed > 30000) {
+              if (finished_elapsed > effect_duration_ms) {
                 id(real_finished_active) = false;
                 finished_effective = false;
               }
@@ -321,9 +329,8 @@ light:
               return;
             }
 
-            // ---------- Normalni status: čitamo direktno sa HA senzora ----------
+            // ---------- Normalni status ----------
             std::string ha_state = id(ha_track_status).state;
-            // Filtriramo nepoznate vrednosti
             if (ha_state == "unknown" || ha_state == "unavailable") {
               ha_state = "NONE";
             }
@@ -335,35 +342,101 @@ light:
               effective_status = id(test_override_status);
             } else {
               effective_status = ha_state;
-              // Ako nema update-a sa HA više od 30 sekundi, ugasi se
               if (now - id(ha_last_update) > 30000 && ha_state == "NONE") {
                 it.all() = Black;
                 return;
               }
             }
 
-            // Mapiranje statusa
             int current_status = CLEAR;
             if (effective_status == "YELLOW") current_status = YELLOW;
             else if (effective_status == "RED") current_status = RED;
             else if (effective_status == "SC") current_status = SC;
             else if (effective_status == "VSC") current_status = VSC;
 
-            // Ažuriranje vremena za CLEAR (samo kada prelazi u CLEAR)
-            if (current_status == CLEAR) {
-              if (id(last_status) != CLEAR) id(clear_start_time) = now;
-              id(last_status) = CLEAR;
-            } else {
-              id(last_status) = current_status;
-            }
-
             it.all() = Black;
 
-            // CLEAR (zeleno prvih 5 sekundi)
-            if (current_status == CLEAR) {
-              if (now - id(clear_start_time) < 5000) {
-                it.all() = G;
+            // Helper: crtanje karaktera 4x5
+            auto draw_char = [&](int x, int y, char ch, Color col) {
+              static const uint8_t font[][5] = {
+                {0b1000, 0b1000, 0b1000, 0b1000, 0b1110}, // L
+                {0b0110, 0b1001, 0b1111, 0b1001, 0b1001}, // A
+                {0b1110, 0b1001, 0b1110, 0b1000, 0b1000}, // P
+                {0b0110, 0b1001, 0b1001, 0b1001, 0b0110}, // 0
+                {0b0010, 0b0110, 0b0010, 0b0010, 0b0111}, // 1
+                {0b0110, 0b1001, 0b0010, 0b0100, 0b1111}, // 2
+                {0b1111, 0b0010, 0b0110, 0b0010, 0b1111}, // 3
+                {0b1001, 0b1001, 0b1111, 0b0001, 0b0001}, // 4
+                {0b1111, 0b1000, 0b1110, 0b0001, 0b1110}, // 5
+                {0b0110, 0b1000, 0b1110, 0b1001, 0b0110}, // 6
+                {0b1111, 0b0001, 0b0010, 0b0100, 0b1000}, // 7
+                {0b0110, 0b1001, 0b0110, 0b1001, 0b0110}, // 8
+                {0b0110, 0b1001, 0b0111, 0b0001, 0b0110}, // 9
+                {0b0000, 0b0000, 0b1110, 0b0000, 0b0000}  // -
+              };
+              int idx = -1;
+              if (ch == 'L') idx = 0;
+              else if (ch == 'A') idx = 1;
+              else if (ch == 'P') idx = 2;
+              else if (ch >= '0' && ch <= '9') idx = 3 + (ch - '0');
+              else if (ch == '-') idx = 13;
+              else return;
+              for (int row = 0; row < 5; row++) {
+                uint8_t bits = font[idx][row];
+                for (int col_bit = 0; col_bit < 4; col_bit++) {
+                  if (bits & (0b1000 >> col_bit)) {
+                    int px = x + col_bit;
+                    int py = y + row;
+                    if (px >= 0 && px < 16 && py >= 0 && py < 16)
+                      it[XY(px, py)] = col;
+                  }
+                }
               }
+            };
+
+            // Dobavljanje broja krugova
+            std::string lap_str;
+            if (override_active && (current_status == CLEAR || current_status == YELLOW)) {
+              lap_str = "--";
+            } else {
+              if (id(race_lap_count).has_state()) {
+                int laps = (int)id(race_lap_count).state;
+                lap_str = to_string(laps);
+              } else {
+                lap_str = "--";
+              }
+            }
+            std::string display_num;
+            if (lap_str.length() > 2) {
+              display_num = lap_str.substr(0,2);
+            } else {
+              display_num = lap_str;
+            }
+
+            // Zajednički prikaz za CLEAR i YELLOW
+            if (current_status == CLEAR || current_status == YELLOW) {
+              Color border_color = (current_status == CLEAR) ? G : Y;
+              for (int i = 0; i < 16; i++) {
+                it[XY(i,0)] = border_color;
+                it[XY(i,15)] = border_color;
+                it[XY(0,i)] = border_color;
+                it[XY(15,i)] = border_color;
+              }
+              draw_char(1, 3, 'L', Wc);
+              draw_char(6, 3, 'A', Wc);
+              draw_char(11, 3, 'P', Wc);
+              if (display_num == "--") {
+                draw_char(4, 9, '-', Wc);
+                draw_char(9, 9, '-', Wc);
+              } else {
+                int first_digit = display_num[0] - '0';
+                int second_digit = (display_num.length() > 1) ? display_num[1] - '0' : -1;
+                draw_char(3, 9, '0' + first_digit, Wc);
+                if (second_digit >= 0) {
+                  draw_char(8, 9, '0' + second_digit, Wc);
+                }
+              }
+              frame = 0;
               return;
             }
 
@@ -374,20 +447,7 @@ light:
               return;
             }
 
-            // YELLOW (pokretni dijagonalni uzorak)
-            if (current_status == YELLOW) {
-              for (int x=0; x<16; x++) {
-                for (int y=0; y<16; y++) {
-                  if (((x + y + (frame / 3)) % 10) < 5) {
-                    it[XY(x,y)] = Y;
-                  }
-                }
-              }
-              frame++;
-              return;
-            }
-
-            // SC (rotirajuća ivica + slova)
+            // SC (rotirajuća ivica)
             if (current_status == SC) {
               static const uint8_t border[][2] = {
                 {0,0},{1,0},{2,0},{3,0},{4,0},{5,0},{6,0},{7,0},{8,0},{9,0},{10,0},{11,0},{12,0},{13,0},{14,0},{15,0},
